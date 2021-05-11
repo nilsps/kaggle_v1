@@ -1,0 +1,731 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r, install packages}
+if(!require(tidyverse)){install.packages("tidyverse")}
+if(!require(lubridate)){install.packages("lubridate")}
+if(!require(glmnet)){install.packages("glmnet")}
+if(!require(crypto2)){install.packages("crypto2")}
+if(!require(quantmod)){install.packages("quantmod")}
+if(!require(tidyquant)){install.packages("tidyquant")}
+if(!require(purrr)){install.packages("purrr")}
+if(!require(dplyr)){install.packages("dplyr")}
+if(!require(rpart)){install.packages(c("rpart","rpart.plot"))}
+if(!require(randomForest)){install.packages(c("randomForest"))}
+if(!require(doParallel)){install.packages(c("doParallel"))}
+if(!require(caret)){install.packages(c("caret"))}
+library(caret) 
+
+library(dplyr) 
+library(rpart) 
+library(rpart.plot)
+library(tidyquant)                      
+library(tidyverse)                      # Activate the data science package
+library(lubridate)                      # Activate the date management package
+library(glmnet)                         # Package for penalized regressions
+library(cowplot)
+library(crypto2)
+library(quantmod)
+library(purrr)
+library(glmnet)                                     # This is THE package for penalised regressions
+library(tidyverse)                                  # ... the usual core packages
+```
+
+```{python}
+reticulate::repl_python()
+# test
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from keras import backend as K
+```
+
+
+```{r}
+data = read.csv2(file = "CC_training.csv", sep = ';')
+data_testing = read.csv2(file = "CC_testing.csv", sep = ';')
+
+``` 
+
+
+```{r first, warning = FALSE, message = FALSE}
+#data <- coin_history %>% arrange(time_open,name)                 # Just making sure all is in order
+
+cc_id = levels(as.factor(data$cc_id))                           # Set of assets
+
+
+data <- data  %>% 
+    group_by(cc_id) %>%                           # Group asset by asset
+    na.omit()                                     # Take out missing data
+features <- colnames(data[7:131])
+
+data_testing <- data_testing  %>% 
+    group_by(cc_id2) %>%                           # Group asset by asset
+    na.omit()                                     # Take out missing data
+    
+```
+
+```{r, call cluster activation of parallel }
+cl <- makeCluster(7, type = "SOCK")
+
+call_cluster_init = function(cl){
+  library(doParallel)
+  library(snow)
+  library(doSNOW)
+  registerDoParallel(cl)
+}
+```
+
+# ```{r, DATA CLEAN, Searches for 0s in all cells, if found omit entire col in data}
+#  
+#  call_cluster_init() #Own cluster function being called 
+#  
+#  total_loop_time = proc.time()
+#  
+#  l_var_rem = NULL
+#  l_var_rem %>% as.list()
+#  
+#   Nullvars = foreach (j = 7:NCOL(data), .packages = "dplyr")%do%{  # Search in colums, start at 7th col
+#    for (i in 1:nrow(data)){                   # Search all the rows 
+#        if (data[i,j] == 0){                   # if cell = 0
+#          data = subset(data, select = -c(j))  # select the feature\col in data and remove it 
+#          #l_var_rem[j,] = j            # Print the col index number that has been removed
+#          #return(data)
+#          return(data)
+#        }
+#    }
+#   }
+#   
+# proc.time() - total_loop_time #stops timer
+#  
+# stopCluster(cl)
+#  
+# saveRDS(data, file = "data_clean.RData") # Saves the featured sorted (just in case)
+# 
+#   #Possitive, it works. However, it uses 30m-1hr to clean # IF Dopar runs, it takes about 5m 
+# ```
+
+# ```{r, DATA_TESTSAMPLE CLEAN, Searches for 0s in all cells, if found omit entire col in data}
+#  
+# Nullvars = foreach (j = 3:NCOL(data_testing))%do%{  # Search in colums, start at 7th col
+#   for (i in 1:nrow(data_testing)){                   # Search all the rows 
+#       if (data_testing[i,j] == 0){                   # if cell = 0
+#         data_testing = subset(data_testing, select = -c(j))  # select the feature\col in data and remove it 
+#         sprintf("removed col %d", j)         # This does not work
+#         print(j)                             # Print the col index number that has been removed
+#       }
+#   }
+# }
+# 
+# saveRDS(data_testing, file = "data_testing.RData") # Saves the featured sorted (just in case)
+# 
+#  #Possitive, it works. However, it uses 30m-1hr to clean 
+# ```
+
+# ```{r}
+# features = colnames(data) # creates a list of all colnames 
+# feature_v2 = features[7:length(features)] # Defining v2 to org features, for testing purposes
+# testing_feat = colnames(data_testing)
+# 
+# saveRDS(testing_feat, file = "testing_feat_backup.RData") # Saves the featured sorted (just in case)
+# saveRDS(feature, file = "filtred_feature_backup.RData") # Saves the featured sorted (just in case)
+# saveRDS(feature_v2, file = "filtred_v2_feature_backup.RData") # Saves the featured sorted (just in case)
+# ```
+
+```{r, reloading cleaned features from previous history}
+testing_feat = read.csv2("testing_feat_backup.RData") # Saves the featured sorted (just in case)
+feature = read.csv2("filtred_feature_backup.RData") # Saves the featured sorted (just in case)
+feature_v2 = read.csv2("filtred_v2_feature_backup.RData") # Saves the featured sorted (just in case)
+```
+
+```{r, compares the two files test feat and training feat compares them and keeps similarity}
+features_clean = merge(feature_v2,testing_feat) %>% as.vector()
+features_clean
+```
+
+
+```{r reg, warning = FALSE, message = FALSE}
+data %>% group_by(date) %>%             # Grouping to normalise on a date basis
+    mutate_if(is.numeric,scale) %>%     # Scaled chars
+    ungroup() %>%                       # Ungroup: global variable
+    select(-cc_id, -date, -feature_3) %>%    # Take out irrelevant columns for the regression
+    lm(RET_1D ~ ., data = .) %>%      # Perform the regression
+    summary() %>%                       # Get the summary
+    "$"(coef) %>%                       # Keeping only the coefs & stats
+    round(3) %>%                        # Round up to 3 digits
+    data.frame()                        # Convert to dataframe
+
+```
+
+
+```{r prep elasticnet, warning = FALSE, message = FALSE}
+data_lasso <-  data %>% group_by(date) %>%          # Grouping to normalise on a date-by-date basis
+    mutate_if(is.numeric,scale) %>%                 # Scaled chars
+    ungroup()
+
+y <- data_lasso$RET_1M                            # Dependent variable
+x <- data_lasso %>%                                 # Independent variables
+    select(-cc_id, -date) %>%
+  as.matrix()  
+
+x[is.na(x)] = 0 # setting NAs to Zero
+var_names = features_clean %>% as.vector() %>% t() %>% unlist() # Converting features clean matrix to Char vec
+```
+
+
+```{r, elasticnet}
+fit <- glmnet(x,y, alpha = 0.3)                   # The elasticnet: 1 = Lasso, 0 = Ridge
+res <- summary(fit$beta)                            # Summary of elasticnet regressions
+lambda <- fit$lambda                                # Values of the penalisation constant
+res$Lambda <- lambda[res$j]                         # Putting the labels where they belong
+res$Char <- var_names[res$i] %>% as.factor()        # Adding the names of variables to the output
+res %>% ggplot(aes(x = Lambda, y = x, color = Char)) + geom_line()
+```
+### Testing tree
+# ```{r, Calibration tree}
+# predictors = data# %>% ungroup(cc_id) %>% select(-date, -cc_id) %>%  as.matrix()
+# output = data$RET_1D
+# 
+# model <- randomForest(x = predictors, y = output,
+#                       ntree = 50) # number of trees
+# 
+# # check out the details
+# rf_tree_tune = model
+# save(rf_tree_tune, file = "rf_tree_tune.RData")
+# ```
+
+```{r, message = FALSE, warning = FALSE}
+library(randomForest) 
+set.seed(42)                                # Sets the random seed
+
+formula <- paste("RET_1M ~", paste(var_names, collapse = " + ")) # Defines the model 
+formula <- as.formula(formula)                                   # Forcing formula object
+
+fit_RF = randomForest(formula,             # Same formula as for simple trees!
+                 data = data, #%>% ungroup(cc_id) %>% select(-c(date, cc_id, RET_1D, RET_1W, RET_1M)),    # Data source: training sample
+                 sampsize = 10000,          # Size of (random) sample for each tree
+                 replace = FALSE,           # Is the sampling done with replacement?
+                 nodesize = 250,            # Minimum size of terminal cluster
+                 ntree = 50,                # Nb of random trees
+                 mtry = 38,                  # Nb of predictive variables for each tree
+    )
+mean(predict(fit_RF, data))       # Prediction over the first 5 test instances 
+# mean((predict(fit_RF, data_testing) - data_testing$feature_123)^2) # MSE
+# mean(predict(fit_RF, data_testing) * data_testing$feature_123 > 0)
+# 
+# predict(rf_tree_tune, data)       # Prediction over the first 5 test instances 
+# mean((predict(rf_tree_tune, data_testing) - data_testing$feature_123)^2) # MSE
+# mean(predict(rf_tree_tune, data_testing) * data_testing$feature_123 > 0)
+```
+
+
+```{r, find autotuned all primary filtred features for rpart}
+library(e1071)
+
+
+call_cluster_init()
+
+minsplit_audit.rpart = NULL
+minb_audit.rpart = NULL
+cp_audit.rpart  = NULL
+maxdepth_audit.rpart = NULL 
+
+formula <- paste("RET_1M ~", paste(var_names, collapse = " + ")) # Defines the model 
+formula <- as.formula(formula)                                   # Forcing formula object
+
+total_loop_time = proc.time() #Starts timer 
+
+foreach (i = 1:4, .packages = "e1071") %dopar% {
+  if (i == 1) {
+        minsplit_audit.rpart = tune.rpart(formula, data=data, minsplit=seq(1,51,5)) #Sequence, from 5 to 50 with 5m increment
+          plot_a = plot(minsplit_audit.rpart, main="Tune rpart on minsplit")        
+          return(minsplit_audit.rpart)}
+  if (i == 2) {      
+         minb_audit.rpart = tune.rpart(formula, data=data, minbucket= seq(20,50,2))
+         plot(minb_audit.rpart, main="Tune rpart on minbucket")
+          return(minb_audit.rpart)}
+   if (i == 3) {      
+         cp_audit.rpart = tune.rpart(formula, data = data, cp = c(0.0001, 0.0005, 0.001, 0.0015, 0.002, 0.005, 0.01))
+          plot(cp_audit.rpart,main="Performance of rpart vs. cp")
+           return(cp_audit.rpart)}
+   if (i == 4){      
+         maxdepth_audit.rpart = tune.rpart(formula, data = data, maxdepth = 2:5)
+          plot(maxdepth_audit.rpart,main="Performance of rpart vs. maxdepth") #Plots all graphs 
+           return(maxdepth_audit.rpart)}
+  
+
+}
+
+proc.time() - total_loop_time #stops timer
+
+stopCluster(cl)
+
+#Result 
+# minsplit 6 error 0.0116681
+# minbucket 32 er .0235485
+# CP 0.0001 er 0.01138427
+# max depth 3 er 0.01564336
+
+```
+
+
+
+```{r, message = FALSE, warning = FALSE}
+
+formula <- paste("RET_1M ~", paste(var_names, collapse = " + ")) # Defines the model 
+formula <- as.formula(formula)                                   # Forcing formula object
+
+fit_tree <- rpart(formula,
+             data = data,     # Data source: full sample
+             minbucket = 34,   # Min nb of obs required in each terminal node (leaf)
+             minsplit = 6,    # Min nb of obs required to continue splitting
+             cp = 0.0001,        # Precision: smaller = more leaves
+             maxdepth = 3        # Maximum depth (i.e. tree levels)
+             ) 
+rpart.plot(fit_tree)             # Plot the tree
+```
+
+```{r, find autotuned for identified features from lasso and tree Srpart}
+library(e1071)
+
+
+call_cluster_init()
+
+minsplit_audit.rpart = NULL
+minb_audit.rpart = NULL
+cp_audit.rpart  = NULL
+maxdepth_audit.rpart = NULL 
+
+test_vars = c("feature_12", "feature_13", "feature_16", "feature_33", "feature_34", "feature_35", "feature_41", "feature_42", "feature_65")
+
+formula <- paste("RET_1M ~", paste(test_vars, collapse = " + ")) # Defines the model 
+formula <- as.formula(formula)                                   # Forcing formula object
+
+total_loop_time = proc.time() #Starts timer 
+
+foreach (i = 1:4, .packages = "e1071") %dopar% {
+  if (i == 1) {
+        minsplit_audit.rpart = tune.rpart(formula, data=data, minsplit=seq(1,51,5)) #Sequence, from 5 to 50 with 5m increment
+          plot_a = plot(minsplit_audit.rpart, main="Tune rpart on minsplit")        
+          return(minsplit_audit.rpart)}
+  if (i == 2) {      
+         minb_audit.rpart = tune.rpart(formula, data=data, minbucket= seq(20,50,2))
+         plot(minb_audit.rpart, main="Tune rpart on minbucket")
+          return(minb_audit.rpart)}
+   if (i == 3) {      
+         cp_audit.rpart = tune.rpart(formula, data = data, cp = c(0.0001, 0.0005, 0.001, 0.0015, 0.002, 0.005, 0.01))
+          plot(cp_audit.rpart,main="Performance of rpart vs. cp")
+           return(cp_audit.rpart)}
+   if (i == 4){      
+         maxdepth_audit.rpart = tune.rpart(formula, data = data, maxdepth = 2:5)
+          plot(maxdepth_audit.rpart,main="Performance of rpart vs. maxdepth") #Plots all graphs 
+           return(maxdepth_audit.rpart)}
+  
+
+}
+
+proc.time() - total_loop_time #stops timer
+
+stopCluster(cl)
+
+#Result 
+# minsplit 6 error 0.0116681
+# minbucket 20 er .0235485
+# CP 0.0001 er 0.01138427
+# max depth 3 er 0.01564336
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+
+test_vars = c("feature_12", "feature_13", "feature_16", "feature_33", "feature_34", "feature_35", "feature_41", "feature_42", "feature_65", "RET_1M")
+
+formula <- paste("RET_1M ~", paste(test_vars, collapse = " + ")) # Defines the model 
+formula <- as.formula(formula)                                   # Forcing formula object
+
+fit_tree <- rpart(formula,
+             data = data,     # Data source: full sample
+             minbucket = 20,   # Min nb of obs required in each terminal node (leaf)
+             minsplit = 6,    # Min nb of obs required to continue splitting
+             cp = 0.0001,        # Precision: smaller = more leaves
+             maxdepth = 3        # Maximum depth (i.e. tree levels)
+             ) 
+rpart.plot(fit_tree)             # Plot the tree
+```
+
+```{r, message = FALSE, warning = FALSE}
+test_pred_table = predict(fit_tree, data) # Test (prediction) on the first six instances of the sample
+view(test_pred_table)
+    
+```
+
+```{r}
+test_vars = c("feature_12", "feature_13", "feature_16", "feature_33", "feature_34", "feature_35", "feature_41", "feature_42", "feature_65", "RET_1M")
+
+all_feat_clean = as.vector(as.character(features_clean[,1]))
+all_feat_clean = append(all_feat_clean, "RET_1M")
+
+pca <- data %>% ungroup(cc_id)  %>% 
+    select(-cc_id, -date) %>%
+    dplyr::select(all_feat_clean) %>%# %>% select(-cc_id, -date) %>%   # Smaller number of predictors
+    prcomp()                             # Performs PCA
+
+library(factoextra)                      # Package for PCA visualization
+fviz_pca_var(pca,                        # Source of PCA decomposition
+             col.var="contrib",          
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE                # Avoid text overlapping
+)
+```
+
+```{r}
+library(broom)                                  # Package for clean regression output 
+
+temp_dat = data %>%
+    ungroup(cc_id) %>%
+    select(-cc_id, -date) %>%
+    select(as.character(all_feat_clean))
+
+temp_dat %>% 
+    dplyr::select(c(all_feat_clean,  "RET_1M")) %>%  # List of variables
+    lm(RET_1M ~ . , data = .) %>%              # Model: predict R1M_Usd
+    tidy() %>%                                  # Put output in clean format
+    filter(abs(statistic) > 3)  %>%             # Keep significant predictors only
+    knitr::kable(booktabs = TRUE,
+                 caption = "Significant predictors in the training sample.")
+```
+
+```{r}
+library(corrplot)              # Package for plots of correlation matrices
+C <- cor(data %>% dplyr::select(all_feat_clean)) # Correlation matrix
+corrplot(C, tl.pos='n')        # Plot
+```
+
+```{r}
+library(magrittr)
+
+data %>%                                  # Start from large sample
+    dplyr::select(all_feat_clean) %>% ungroup() %>% select(-cc_id) %>%              # Keep only 7 features
+    as.matrix() %>%                                  # Transform in matrix
+    multiply_by_matrix(pca$rotation[,1:4]) %>%       # Rotate via PCA (first 4 columns of P)
+    `colnames<-`(c("PC1", "PC2", "PC3", "PC4")) %>%  # Change column names
+    head() 
+```
+```{r, message = FALSE, warning = FALSE}
+library(keras)
+input_layer <- layer_input(shape = c(9))    # all_feat_clean  9 columns 
+
+encoder <- input_layer %>%       # First, encode
+    layer_dense(units = 64, activation = "sigmoid") %>% 
+    layer_dense(units = 4)       # 4 dimensions for the output layer (same as PCA example)
+
+decoder <- encoder %>%           # Then, from encoder, decode
+    layer_dense(units = 64, activation = "sigmoid") %>% 
+    layer_dense(units = 9)       # the original sample has 9 features
+```
+
+```{r, message = FALSE, warning = FALSE}
+ae_model <- keras_model(inputs = input_layer, outputs = decoder) # Builds the model
+
+ae_model %>% compile(                # Learning parameters
+    loss = 'mean_squared_error',
+    optimizer = 'adam',
+    metrics = c('mean_absolute_error')
+)
+```
+
+```{r, message = FALSE, warning = FALSE}
+
+test_vars = c("feature_12", "feature_13", "feature_16", "feature_33", "feature_34", "feature_35", "feature_41", "feature_42", "feature_65")
+
+fit_ae <- ae_model %>% 
+    fit(data %>% dplyr::select(test_vars)%>% ungroup() %>% select(-cc_id) %>% as.matrix(),  # Input
+        data %>% dplyr::select(test_vars)%>% ungroup() %>% select(-cc_id) %>% as.matrix(),  # Output
+        epochs = 64, batch_size = 1024,
+        validation_data = list(data_testing %>% dplyr::select(test_vars)%>% ungroup() %>% select(-cc_id2) %>% as.matrix(), 
+                               data_testing %>% dplyr::select(test_vars)%>% ungroup() %>% select(-cc_id2) %>% as.matrix())
+    )
+plot(fit_ae) + theme_grey()
+```
+
+# ```{r, message = FALSE, warning = FALSE}
+# ae_model %>% get_weights()
+# ```
+
+```{r, message = FALSE, warning = FALSE}
+set.seed(42)                               # Setting the random seed (the optim. is random)
+k_means <- data %>%             # Performs the k-means clustering
+    dplyr::select(test_vars) %>% ungroup() %>% select(-cc_id) %>%
+    as.matrix() %>%
+    t() %>%
+    kmeans(7)
+clusters <- tibble(factor = names(k_means$cluster),   # Organize the cluster data
+                   cluster = k_means$cluster) %>%
+    arrange(cluster)
+clusters #%>% filter(cluster == 4)                     # Shows one particular group
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+library(FNN)     # Package for Fast Nearest Neighbors detection
+
+test_vars = c("feature_12", "feature_13", "feature_16", "feature_33", "feature_34", "feature_35", "feature_41", "feature_42", "feature_65")
+
+knn_data <- data # Dataset for k-NN exercise
+
+
+knn_target <- filter(knn_data, cc_id == 25) %>%   # Target observation
+              dplyr::select(test_vars)
+knn_sample <- filter(knn_data, cc_id != 25) %>%   # All other observations
+              dplyr::select(test_vars)
+neighbors <- get.knnx(data = knn_sample, query = knn_target, k = 30) 
+#neighbors$nn.index                                   # Indices of the k nearest neighbors
+```
+
+```{r, message = FALSE, warning = FALSE}
+library(FNN)     # Package for Fast Nearest Neighbors detection
+
+test_vars = c("feature_12", "feature_13", "feature_16", "feature_33", "feature_34", "feature_35", "feature_41", "feature_42", "feature_65")
+
+Uniqe_ccid = data$cc_id %>% unique() %>% as.vector() %>% t() %>% as.numeric() %>% unlist() # Converting features clean matrix to Char vec
+
+
+
+call_cluster_init(cl)
+#foreach(i = 1:length(data$cc_id %>% unique()), .packages = c("dplyr", "FNN")) %dopar% {
+
+foreach(i = 1:length(data$cc_id %>% unique()), .packages = c("dplyr", "FNN")) %dopar% {
+  knn_res = lapply(Uniqe_ccid, Knn_funk)
+  knn_calc = lapply(Uniqe_ccid, Knn_funk_final)
+  
+  
+}
+
+stopCluster(cl)
+#neighbors$nn.index                                   # Indices of the k nearest neighbors
+```
+
+```{r}
+Knn_funk = function(Uniqe_ccid){
+        knn_data <- data # Dataset for k-NN exercise
+        knn_target <- filter(knn_data, cc_id == Uniqe_ccid) %>%   # Target observation
+                      dplyr::select(test_vars)
+        knn_sample <- filter(knn_data, cc_id != Uniqe_ccid) %>%   # All other observations
+                      dplyr::select(test_vars)
+        neighbors <- get.knnx(data = knn_sample, query = knn_target, k = 30) 
+        return(neighbors)
+}
+```
+
+```{r}
+Knn_funk_final = function(Uniqe_ccid){
+        knn_labels <- knn_data[as.vector(neighbors$nn.index),] %>%                # y values for neighb.
+         dplyr::select(RET_1M)    
+        ret_sum = sum(knn_labels * exp(-neighbors$nn.dist) / sum(exp(-neighbors$nn.dist)))  # Pred w. k(z)=e^(-z)
+        filter(knn_data, cc_id == Uniqe_ccid) %>%                                      # True y 
+              dplyr::select(RET_1M)
+}
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+knn_labels <- knn_data[as.vector(neighbors$nn.index),] %>%                # y values for neighb.
+    dplyr::select(RET_1M)    
+sum(knn_labels * exp(-neighbors$nn.dist) / sum(exp(-neighbors$nn.dist)))  # Pred w. k(z)=e^(-z)
+filter(knn_data, cc_id == 1228) %>%                                      # True y 
+              dplyr::select(RET_1M)
+```
+
+
+```{r sparse_init, warning = FALSE, message = FALSE}
+  
+sep_date <- as.Date("2019-03-01")           # This date separates in-sample vs out-of-sample
+t_oos <- data$date[data$date>sep_date] %>%  # Out-of-sample dates (i.e., testing set)
+    unique() %>%                            # Remove duplicates
+    as.Date(origin = "1970-01-01")          # Transform in date format
+returns <- data %>%                         # Computing returns, in matrix format, in 2 steps:
+    select(date, cc_id, RET_1M) %>%        # 1. Keep returns along with dates & firm names
+    spread(key = cc_id, value = RET_1M)    # 2. Put in matrix shape
+# Below, we initialise the variables used in the backtesting loop
+portf_weights <- matrix(0, nrow = length(t_oos), ncol = length(cc_id))
+portf_returns <- c()      
+returns[is.na(returns)] = 0
+
+
+returns                                     # A look at the returns
+
+
+```
+
+```{r, Return CLEANER, Searches for 0s in all cells, if found omit entire col in data}
+
+Nullvars = foreach (j = 3:ncol(returns))%do%{  # Search in colums, start at 7th col
+ for (i in 1:nrow(returns)){                   # Search all the rows 
+     if (returns[i,j] == 0){                   # if cell = 0
+       returns = subset(returns, select = -c(j))  # select the feature\col in data and remove it 
+       sprintf("removed col %d", j)         # This does not work
+       print(j)                             # Print the col index number that has been removed
+     }
+ }
+}
+#quite fast run twice to get the last feature out
+```
+
+```{r sparse_func}
+weights_lasso <- function(returns, alpha, lambda){  # The parameters are defined here
+    w <- 0                                          # Initiate weights
+    for(i in 1:ncol(returns)){                      # Loop on the assets
+        y <- returns[,i]                            # Dependent variable
+        x <- returns[,-i]                           # Independent variable
+        fit <- glmnet(x,y, family = "gaussian", alpha = alpha, lambda = lambda)
+        err <- y-predict(fit, x)                    # Prediction errors
+        w[i] <- (1-sum(fit$beta))/var(err)          # Output: weight of asset i
+    }
+    return(w / sum(w))                              # Normalisation of weights
+}
+```
+
+
+
+```{r sparse_go}
+for(t in 1:length(t_oos)){
+    temp_data = returns %>% filter(date < t_oos[t]) %>%    # Extracting past data: expand. window 
+        select(-date) %>%                                   # Take out the date
+        as.matrix()                                         # Into matrix: glmnet requires matrices
+    portf_weights[t,] <- weights_lasso(temp_data, 0.001, 0.01)# Hard-coded parameters! User specified!
+    realised_returns <- returns %>%                         # Realised returns:
+        filter(date ==  t_oos[t]) %>%                       # Filtered by date
+        select(-date)                                       # With date removed
+    portf_returns[t] <- sum(portf_weights[t,] * realised_returns) # Portfolio returns
+}
+```
+
+
+#
+# Works to here
+#
+
+```{r perf_met}
+perf_met <- function(portf_returns, weights, asset_returns){
+    avg_ret <- mean(portf_returns, na.rm = T)                     # Arithmetic mean 
+    vol <- sd(portf_returns, na.rm = T)                           # Volatility
+    Sharpe_ratio <- avg_ret / vol                                 # Sharpe ratio
+    VaR_5 <- quantile(portf_returns, 0.05)                        # Value-at-risk
+    turn <- 0                                                     # Initialisation of turnover
+    for(t in 2:dim(weights)[1]){
+        realised_returns <- asset_returns %>% filter(time_open == t_oos[t]) %>% select(-time_open)
+        prior_weights <- weights[t-1,] * (1 + realised_returns)
+        turn <- turn + apply(abs(weights[t,] - prior_weights/sum(prior_weights)),1,sum)
+    }
+    turn <- turn/(length(t_oos)-1)                                # Average over time
+    met <- data.frame(avg_ret, vol, Sharpe_ratio, VaR_5, turn)    # Aggregation of all of this
+    rownames(met) <- "metrics"
+    return(met)
+}
+
+asset_returns <- filter(returns, time_open>sep_date)        # Keep out-of-sample returns
+perf_met(portf_returns, portf_weights, asset_returns)  # Compute perf metrics
+```
+
+```{r weights_multi}
+weights_multi <- function(returns,j, alpha, lambda){
+    N <- ncol(returns)
+    if(j == 1){                     # j = 1 => EW
+        return(rep(1/N,N))
+    }
+    if(j == 2){                     # j = 2 => Minimum Variance
+        sigma <- cov(returns)
+        w <- solve(sigma) %*% rep(1,N)
+        return(w / sum(w))
+    }
+    if(j == 3){                     # j = 3 => Maximum Sharpe Ratio
+        m <- apply(returns, 2, mean)
+        sigma <- cov(returns)
+        w <- solve(sigma) %*% m
+        return(w / sum(w))
+    }
+    if(j == 4){                     # j = 4 => Penalised / elasticnet
+        w <- weights_lasso(returns, alpha, lambda)
+        return(w / sum(w))
+    }
+}
+```
+
+```{r multi}
+Tt <- length(t_oos)                                             # Nb of dates, avoid T = TRUE
+nb_port <- 4                                                    # Nb of portfolios
+portf_weights <- array(0, dim = c(Tt, nb_port, length(id)))   # Store weights
+portf_returns <- matrix(0, nrow = Tt, ncol = nb_port)           # Store returns
+
+for(t in 1:length(t_oos)){
+    temp_data <- returns %>% 
+        filter(time_open < t_oos[t]) %>% 
+        select(-time_open) %>%
+        as.matrix()
+    realised_returns <- returns %>% 
+        filter(time_open ==  t_oos[t]) %>% 
+        select(-time_open)
+    for(j in 1:nb_port){                                     
+        portf_weights[t,j,] <- weights_multi(temp_data, j, 0.1, 0.01)  # Hard-coded parameters!
+        portf_returns[t,j] <- sum(portf_weights[t,j,] * realised_returns)
+    }
+}
+```
+
+
+```{r multi_metrics}
+port_names <- c("EW", "MV", "MSR", "LASSO") # Portfolio names
+met <- c()                                  # Initialise metrics
+for(i in 1:nb_port){
+    met <- rbind(met, perf_met(portf_returns[,i], portf_weights[,i,], asset_returns)) # Ugly!
+}
+met %>% data.frame(row.names = port_names)  # Display results
+```
+####
+#### Error final part something with length in matrix (again)
+#####
+```{r w_pure_lasso}
+weights_pure_lasso <- function(past_data,current_data, alpha, lambda){
+    y <- past_data$F_Return                                 # Dependent variable
+    x <- past_data %>%                                      # Independent variables
+        select(-timestamp, -slug, -id, -name, -symbol, -ref_cur, -time_open, -time_high, -time_low, -time_close, -F_Return, -close) %>%        # Remove irrelevant columns
+        as.matrix()                                         # Format to matrix shape
+    
+    fit <- glmnet(x,y, alpha = alpha, lambda = lambda)      # Performing the glmnet regression
+    newx <- current_data %>%                                # Preparing the new data
+        select(-timestamp, -slug, -id, -name, -symbol, -ref_cur, -time_open, -time_high, -time_low, -time_close, -F_Return, -close) %>%        # Remove irrelevant columns
+        as.matrix()                                         # Format to matrix shape
+    pred <- predict(fit, newx = newx)                       # Launching the prediction
+    w <- pred > 0                                           # Invests only if positive prediction
+    return(w/sum(w))                                        # Then, equal weights
+}
+```
+
+```{r lasso_pred}
+t_oos2 <- data$time_open[data$time_open>sep_date-20] %>%      # New dates, we take one more (prev. month)!:: 
+    unique() %>%                                    # Remove duplicates
+    as.Date(origin = "1970-01-01")                  # Transform in date format
+portf_weights <- matrix(0, nrow = length(t_oos), ncol = length(id))   # Initialisation
+portf_returns <- c()                                                    # Initialisation
+
+for(t in 2:length(t_oos2)){                                         # Current time is t-1
+    past_data <- data_lasso %>% filter(time_open < t_oos2[t-1])          # Past data: expanding window
+    current_data <- data_lasso %>% filter(time_open == t_oos2[t-1])      # Extracting current data
+    portf_weights[t-1,] <- weights_pure_lasso(past_data,current_data, 0.1, 0.01)  
+    # Hard-coded parameters above! User specified!
+    realised_returns <- returns %>%                     # Realised returns
+        filter(time_open ==  t_oos2[t]) %>%                  # Note: starts at t = 2, equal to t_oos[1]
+        select(-time_open)                                   # Take out date column
+    portf_returns[t-1] <- sum(portf_weights[t-1,] * realised_returns) 
+    # Note: t-1, like for the portfolios !!!
+}
+asset_returns <- filter(returns, Date %in% t_oos) # And not t_oos!
+perf_met(portf_returns, portf_weights, asset_returns)
+```
