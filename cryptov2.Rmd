@@ -1,0 +1,308 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r, install packages}
+if(!require(tidyverse)){install.packages("tidyverse")}
+if(!require(lubridate)){install.packages("lubridate")}
+if(!require(glmnet)){install.packages("glmnet")}
+if(!require(crypto2)){install.packages("crypto2")}
+if(!require(quantmod)){install.packages("quantmod")}
+if(!require(tidyquant)){install.packages("tidyquant")}
+if(!require(purrr)){install.packages("purrr")}
+if(!require(dplyr)){install.packages("dplyr")}
+if(!require(rpart)){install.packages(c("rpart","rpart.plot"))}
+if(!require(randomForest)){install.packages(c("randomForest"))}
+if(!require(doParallel)){install.packages(c("doParallel"))}
+if(!require(caret)){install.packages(c("caret"))}
+library(caret) 
+
+library(dplyr) 
+library(rpart) 
+library(rpart.plot)
+library(tidyquant)                      
+library(tidyverse)                      # Activate the data science package
+library(lubridate)                      # Activate the date management package
+library(glmnet)                         # Package for penalized regressions
+library(cowplot)
+library(crypto2)
+library(quantmod)
+library(purrr)
+library(glmnet)                                     # This is THE package for penalised regressions
+library(tidyverse)                                  # ... the usual core packages
+```
+
+```{python}
+reticulate::repl_python()
+# test
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from keras import backend as K
+```
+
+
+```{r}
+data = read.csv2(file = "CC_training.csv", sep = ';')
+data_testing = read.csv2(file = "CC_testing.csv", sep = ';')
+
+``` 
+
+```{r first, warning = FALSE, message = FALSE}
+#data <- coin_history %>% arrange(time_open,name)                 # Just making sure all is in order
+
+cc_id = levels(as.factor(data$cc_id))                           # Set of assets
+
+
+data <- data  %>% 
+    group_by(cc_id) %>%                           # Group asset by asset
+    na.omit()                                     # Take out missing data
+features <- colnames(data[7:131])
+
+data_testing <- data_testing  %>% 
+    group_by(cc_id2) %>%                           # Group asset by asset
+    na.omit()                                     # Take out missing data
+    
+```
+
+```{r, call cluster activation of parallel }
+cl <- makeCluster(7, type = "SOCK")
+
+call_cluster_init = function(cl){
+  library(doParallel)
+  library(snow)
+  library(doSNOW)
+  registerDoParallel(cl)
+}
+```
+
+```{r}
+data_train_scaled = data  %>% ungroup() %>% select(-c(cc_id, date, feature_3, RET_1D,RET_1W,RET_1M,RET_3M)) %>% scale()
+
+data_testing_v2 = data_testing %>% ungroup() %>% select(-c(cc_id2, date_id, Id,feature_3)) %>% scale()
+
+data_test_scaled = scale(data_testing_v2, center=attr(data_train_scaled, "scaled:center"), 
+                              scale=attr(data_train_scaled, "scaled:scale"))
+
+data_train_true = data  %>% ungroup() %>% select(-c(cc_id, date, feature_3)) %>% scale() %>% as.data.frame()
+
+var_names = colnames(data_train_true)
+```
+
+```{r}
+normalise <-  function(v){  # This is a function that 'uniformalises' a vector
+    v <- v %>% as.matrix()
+    return(ecdf(v)(v))
+}
+
+train <- data %>% group_by(date) %>% 
+    mutate(across(c(feature_1:feature_2,feature_4:feature_125),normalise)) %>%
+    ungroup() %>%
+    arrange(cc_id,date)
+
+test <- data_testing %>% group_by(date_id) %>% 
+    mutate(across(c(feature_1:feature_2,feature_4:feature_125),normalise)) %>%
+    ungroup() %>%
+    arrange(cc_id2,date_id)
+```
+
+
+```{r, find autotuned all primary filtred features for rpart}
+library(e1071)
+
+
+call_cluster_init()
+
+minsplit_audit.rpart = NULL
+minb_audit.rpart = NULL
+cp_audit.rpart  = NULL
+maxdepth_audit.rpart = NULL 
+
+formula <- paste("RET_1M ~", paste(var_names, collapse = " + ")) # Defines the model 
+formula <- as.formula(formula)                                   # Forcing formula object
+
+total_loop_time = proc.time() #Starts timer 
+
+foreach (i = 1:4, .packages = "e1071") %dopar% {
+  if (i == 1) {
+        minsplit_audit.rpart = tune.rpart(formula, data=data_train_true, minsplit=seq(30,50,2)) #Sequence, from 5 to 50 with 5m increment
+          plot_a = plot(minsplit_audit.rpart, main="Tune rpart on minsplit")        
+          return(minsplit_audit.rpart)}
+  if (i == 2) {      
+         minb_audit.rpart = tune.rpart(formula, data=data_train_true, minbucket= seq(20,50,2))
+         plot(minb_audit.rpart, main="Tune rpart on minbucket")
+          return(minb_audit.rpart)}
+   if (i == 3) {      
+         cp_audit.rpart = tune.rpart(formula, data = data_train_true, cp = c(0.005, 0.01, 0.03, 0.05, 0.07 , 0.1, 0.2))
+          plot(cp_audit.rpart,main="Performance of rpart vs. cp")
+           return(cp_audit.rpart)}
+   if (i == 4){      
+         maxdepth_audit.rpart = tune.rpart(formula, data = data_train_true, maxdepth = 2:5)
+          plot(maxdepth_audit.rpart,main="Performance of rpart vs. maxdepth") #Plots all graphs 
+           return(maxdepth_audit.rpart)}
+  
+
+}
+
+proc.time() - total_loop_time #stops timer
+
+stopCluster(cl)
+
+#Result 
+# minsplit 6 error 0.8620707  
+# minbucket 38 er 0.8605262
+# CP 0.01 er 0.8564179 
+# max depth 4 er 0.8370033
+#2147
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+
+var_no_RET = var_names[5:length(var_names)] 
+
+formula <- paste("RET_1M ~", paste(var_names, collapse = " + ")) # Defines the model 
+formula <- as.formula(formula)                                   # Forcing formula object
+
+fit_tree <- rpart(formula,
+             data = data_train_true,     # Data source: full sample
+             minbucket = 38,   # Min nb of obs required in each terminal node (leaf)
+             minsplit = 6,    # Min nb of obs required to continue splitting
+             cp = 0.01,        # Precision: smaller = more leaves
+             maxdepth = 4        # Maximum depth (i.e. tree levels)
+             ) 
+rpart.plot(fit_tree)             # Plot the tree
+```
+
+```{r, message = FALSE, warning = FALSE}
+test_pred_table = predict(fit_tree, data_train_true) # Test (prediction) on the first six instances of the sample
+view(test_pred_table)
+    
+```
+
+```{r}
+#test_vars = c("feature_12", "feature_13", "feature_16", "feature_33", "feature_34", "feature_35", "feature_41", "feature_42", "feature_65", "RET_1M")
+
+#all_feat_clean = as.vector(as.character(features_clean[,1]))
+#all_feat_clean = append(all_feat_clean, "RET_1M")
+
+pca <- data_train_true %>% #ungroup(cc_id)  %>% 
+    #select(-cc_id, -date) %>%
+    #dplyr::select(var_names) %>%# %>% select(-cc_id, -date) %>%   # Smaller number of predictors
+    prcomp()                             # Performs PCA
+
+library(factoextra)                      # Package for PCA visualization
+fviz_pca_var(pca,                        # Source of PCA decomposition
+             col.var="contrib",          
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE                # Avoid text overlapping
+)
+```
+
+```{r}
+library(broom)                                  # Package for clean regression output 
+
+temp_dat = data_train_true
+
+temp_dat %>% 
+    dplyr::select(c(var_names,  "RET_1M")) %>%  # List of variables
+    lm(RET_1M ~ . , data = .) %>%              # Model: predict R1M_Usd
+    tidy() %>%                                  # Put output in clean format
+    filter(abs(statistic) > 9)  %>%             # Keep significant predictors only
+    knitr::kable(booktabs = TRUE,
+                 caption = "Significant predictors in the training sample.")
+
+moded_feat = c("feature_32","feature_33","feature_42", "feature_93", "feature_96", "feature_97", "feature_100", "feature_101", "feature_104")
+```
+
+```{r}
+library(corrplot)              # Package for plots of correlation matrices
+C <- cor(data %>% dplyr::select(moded_feat)) # Correlation matrix
+corrplot(C, tl.pos='n')        # Plot
+```
+
+```{r}
+library(magrittr)
+
+data_train_true %>%                                  # Start from large sample
+    dplyr::select(moded_feat)  %>%           # Keep only 7 features
+    as.matrix() %>%                                  # Transform in matrix
+    multiply_by_matrix(pca$rotation[,1:4]) %>%       # Rotate via PCA (first 4 columns of P)
+    `colnames<-`(c("PC1", "PC2", "PC3", "PC4")) %>%  # Change column names
+    head() 
+```
+
+```{r, message = FALSE, warning = FALSE}
+library(keras)
+
+input_layer <- layer_input(shape = c(7))    # all_feat_clean  9 columns 
+
+encoder <- input_layer %>%       # First, encode
+    layer_dense(units = 64, activation = "sigmoid") %>% 
+    layer_dense(units = 7)       # 4 dimensions for the output layer (same as PCA example)
+
+decoder <- encoder %>%           # Then, from encoder, decode
+    layer_dense(units = 64, activation = "sigmoid") %>% 
+    layer_dense(units = 7)       # the original sample has 9 features
+```
+
+```{r, message = FALSE, warning = FALSE}
+ae_model <- keras_model(inputs = input_layer, outputs = decoder) # Builds the model
+
+k_mod = ae_model %>% compile(                # Learning parameters
+    loss = 'mean_squared_error',
+    optimizer = 'adam',
+    metrics = c('mean_absolute_error')
+)
+
+summary (ae_model)
+```
+
+```{r, message = FALSE, warning = FALSE}
+
+
+fit_ae <- ae_model %>% 
+    fit(data_train_scaled %>% as.data.frame() %>% dplyr::select(moded_feat)%>% as.matrix(),  # Input
+        data_train_scaled %>% as.data.frame() %>% dplyr::select(moded_feat)%>% as.matrix(),  # Output
+        epochs = 64, batch_size = 1024,
+        validation_data = list(data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix(), 
+                               data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix())
+    )
+
+val_feat = data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix()
+val_lab = data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix()
+
+plot(fit_ae) + theme_grey()
+```
+
+```{r, message = FALSE, warning = FALSE}
+ae_weights <- ae_model %>% get_weights()
+
+mean(abs(val_lab))
+
+predict(ae_model, t(val_feat[1,])) 
+
+test_features <- data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix()
+
+out = predict(ae_model,(test_features))
+
+out
+```
+
+```{r}
+
+
+PF <- test %>% as.data.frame() %>% select(Id,cc_id2,date_id) %>% add_column(return=out) %>%
+    arrange(Id) %>% group_by(date_id) %>%    mutate(weight=as.numeric(return>=quantile(return,0.7,na.rm=TRUE)),weight=weight/sum(weight)) %>%
+    ungroup() %>%
+    select(Id,Predicted=weight)
+```
+
+
+
