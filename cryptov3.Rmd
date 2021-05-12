@@ -1,0 +1,141 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, install packages}
+if(!require(tidyverse)){install.packages("tidyverse")}
+if(!require(lubridate)){install.packages("lubridate")}
+if(!require(glmnet)){install.packages("glmnet")}
+if(!require(crypto2)){install.packages("crypto2")}
+if(!require(quantmod)){install.packages("quantmod")}
+if(!require(tidyquant)){install.packages("tidyquant")}
+if(!require(purrr)){install.packages("purrr")}
+if(!require(dplyr)){install.packages("dplyr")}
+if(!require(rpart)){install.packages(c("rpart","rpart.plot"))}
+if(!require(randomForest)){install.packages(c("randomForest"))}
+if(!require(doParallel)){install.packages(c("doParallel"))}
+if(!require(caret)){install.packages(c("caret"))}
+library(caret) 
+
+library(dplyr) 
+library(rpart) 
+library(rpart.plot)
+library(tidyquant)                      
+library(tidyverse)                      # Activate the data science package
+library(lubridate)                      # Activate the date management package
+library(glmnet)                         # Package for penalized regressions
+library(cowplot)
+library(crypto2)
+library(quantmod)
+library(purrr)
+library(glmnet)                                     # This is THE package for penalised regressions
+library(tidyverse)                                  # ... the usual core packages
+```
+
+```{python}
+reticulate::repl_python()
+# test
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from keras import backend as K
+```
+
+```{r}
+data = read.csv2(file = "CC_training.csv", sep = ';')
+data_testing = read.csv2(file = "CC_testing.csv", sep = ';')
+
+``` 
+
+```{r first, warning = FALSE, message = FALSE}
+#data <- coin_history %>% arrange(time_open,name)                 # Just making sure all is in order
+
+cc_id = levels(as.factor(data$cc_id))                           # Set of assets
+
+
+data <- data  %>% 
+    group_by(cc_id)# %>%                           # Group asset by asset
+    #na.omit()                                     # Take out missing data
+features <- colnames(data[7:131])
+
+data_testing <- data_testing  %>% 
+    group_by(cc_id2) #%>%                           # Group asset by asset
+    #na.omit()                                     # Take out missing data
+    
+```
+
+```{r, call cluster activation of parallel }
+cl <- makeCluster(7, type = "SOCK")
+
+call_cluster_init = function(cl){
+  library(doParallel)
+  library(snow)
+  library(doSNOW)
+  registerDoParallel(cl)
+}
+```
+
+```{r}
+data_train_scaled = data  %>% ungroup() %>% select(-c(cc_id, date, feature_3, RET_1D,RET_1W,RET_1M,RET_3M)) %>% scale()
+
+data_testing_v2 = data_testing %>% ungroup() %>% select(-c(cc_id2, date_id, Id,feature_3)) %>% scale()
+
+data_test_scaled = scale(data_testing_v2, center=attr(data_train_scaled, "scaled:center"), 
+                              scale=attr(data_train_scaled, "scaled:scale"))
+
+data_train_true = data  %>% ungroup() %>% select(-c(cc_id, date, feature_3)) %>% scale() %>% as.data.frame()
+
+var_names = colnames(data_train_true)
+```
+
+```{r}
+
+pca <- data_train_true %>%
+    prcomp()                             # Performs PCA
+
+library(factoextra)                      # Package for PCA visualization
+fviz_pca_var(pca,                        # Source of PCA decomposition
+             col.var="contrib",          
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE                # Avoid text overlapping
+)
+```
+
+```{r}
+library(broom)                                  # Package for clean regression output 
+
+temp_dat = data_train_true
+
+temp_dat_v2 = temp_dat %>% 
+    dplyr::select(c(var_names,  "RET_1M")) %>%  # List of variables
+    lm(RET_1M ~ . , data = .) %>%              # Model: predict R1M_Usd
+    tidy() %>%                                  # Put output in clean format
+    filter(abs(statistic) > 3)
+
+mod_feat = c(temp_dat_v2[1]) %>% as.vector() %>% unlist() %>% as.character() 
+mod_feat = mod_feat[-c(1:2)]
+head(mod_feat)
+
+``` 
+
+```{r}
+library(corrplot)              # Package for plots of correlation matrices
+C <- cor(data_train_scaled %>% as.data.frame() %>% dplyr::select(mod_feat)) # Correlation matrix
+corrplot(C, tl.pos='n')        # Plot
+```
+
+```{r}
+set.seed(42)                               # Setting the random seed (the optim. is random)
+k_means <- data_train_true %>%             # Performs the k-means clustering
+    dplyr::select(mod_feat) %>%
+    as.matrix() %>%
+    t() %>%
+    kmeans(7)
+clusters <- tibble(factor = names(k_means$cluster),   # Organize the cluster data
+                   cluster = k_means$cluster) %>%
+    arrange(cluster)
+clusters #%>% filter(cluster == 4)                     # Shows one particular group
+```
+

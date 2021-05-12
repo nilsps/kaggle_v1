@@ -61,13 +61,13 @@ cc_id = levels(as.factor(data$cc_id))                           # Set of assets
 
 
 data <- data  %>% 
-    group_by(cc_id) %>%                           # Group asset by asset
-    na.omit()                                     # Take out missing data
+    group_by(cc_id)# %>%                           # Group asset by asset
+    #na.omit()                                     # Take out missing data
 features <- colnames(data[7:131])
 
 data_testing <- data_testing  %>% 
-    group_by(cc_id2) %>%                           # Group asset by asset
-    na.omit()                                     # Take out missing data
+    group_by(cc_id2) #%>%                           # Group asset by asset
+    #na.omit()                                     # Take out missing data
     
 ```
 
@@ -113,46 +113,46 @@ test <- data_testing %>% group_by(date_id) %>%
 ```
 
 
-```{r, find autotuned all primary filtred features for rpart}
-library(e1071)
-
-
-call_cluster_init()
-
-minsplit_audit.rpart = NULL
-minb_audit.rpart = NULL
-cp_audit.rpart  = NULL
-maxdepth_audit.rpart = NULL 
-
-formula <- paste("RET_1M ~", paste(var_names, collapse = " + ")) # Defines the model 
-formula <- as.formula(formula)                                   # Forcing formula object
-
-total_loop_time = proc.time() #Starts timer 
-
-foreach (i = 1:4, .packages = "e1071") %dopar% {
-  if (i == 1) {
-        minsplit_audit.rpart = tune.rpart(formula, data=data_train_true, minsplit=seq(30,50,2)) #Sequence, from 5 to 50 with 5m increment
-          plot_a = plot(minsplit_audit.rpart, main="Tune rpart on minsplit")        
-          return(minsplit_audit.rpart)}
-  if (i == 2) {      
-         minb_audit.rpart = tune.rpart(formula, data=data_train_true, minbucket= seq(20,50,2))
-         plot(minb_audit.rpart, main="Tune rpart on minbucket")
-          return(minb_audit.rpart)}
-   if (i == 3) {      
-         cp_audit.rpart = tune.rpart(formula, data = data_train_true, cp = c(0.005, 0.01, 0.03, 0.05, 0.07 , 0.1, 0.2))
-          plot(cp_audit.rpart,main="Performance of rpart vs. cp")
-           return(cp_audit.rpart)}
-   if (i == 4){      
-         maxdepth_audit.rpart = tune.rpart(formula, data = data_train_true, maxdepth = 2:5)
-          plot(maxdepth_audit.rpart,main="Performance of rpart vs. maxdepth") #Plots all graphs 
-           return(maxdepth_audit.rpart)}
-  
-
-}
-
-proc.time() - total_loop_time #stops timer
-
-stopCluster(cl)
+# ```{r, find autotuned all primary filtred features for rpart}
+# library(e1071)
+# 
+# 
+# call_cluster_init()
+# 
+# minsplit_audit.rpart = NULL
+# minb_audit.rpart = NULL
+# cp_audit.rpart  = NULL
+# maxdepth_audit.rpart = NULL 
+# 
+# formula <- paste("RET_1M ~", paste(var_names, collapse = " + ")) # Defines the model 
+# formula <- as.formula(formula)                                   # Forcing formula object
+# 
+# total_loop_time = proc.time() #Starts timer 
+# 
+# foreach (i = 1:4, .packages = "e1071") %dopar% {
+#   if (i == 1) {
+#         minsplit_audit.rpart = tune.rpart(formula, data=data_train_true, minsplit=seq(30,50,2)) #Sequence, from 5 to 50 with 5m increment
+#           plot_a = plot(minsplit_audit.rpart, main="Tune rpart on minsplit")        
+#           return(minsplit_audit.rpart)}
+#   if (i == 2) {      
+#          minb_audit.rpart = tune.rpart(formula, data=data_train_true, minbucket= seq(20,50,2))
+#          plot(minb_audit.rpart, main="Tune rpart on minbucket")
+#           return(minb_audit.rpart)}
+#    if (i == 3) {      
+#          cp_audit.rpart = tune.rpart(formula, data = data_train_true, cp = c(0.005, 0.01, 0.03, 0.05, 0.07 , 0.1, 0.2))
+#           plot(cp_audit.rpart,main="Performance of rpart vs. cp")
+#            return(cp_audit.rpart)}
+#    if (i == 4){      
+#          maxdepth_audit.rpart = tune.rpart(formula, data = data_train_true, maxdepth = 2:5)
+#           plot(maxdepth_audit.rpart,main="Performance of rpart vs. maxdepth") #Plots all graphs 
+#            return(maxdepth_audit.rpart)}
+#   
+# 
+# }
+# 
+# proc.time() - total_loop_time #stops timer
+# 
+# stopCluster(cl)
 
 #Result 
 # minsplit 6 error 0.8620707  
@@ -160,7 +160,7 @@ stopCluster(cl)
 # CP 0.01 er 0.8564179 
 # max depth 4 er 0.8370033
 #2147
-```
+#```
 
 
 ```{r, message = FALSE, warning = FALSE}
@@ -182,7 +182,7 @@ rpart.plot(fit_tree)             # Plot the tree
 
 ```{r, message = FALSE, warning = FALSE}
 test_pred_table = predict(fit_tree, data_train_true) # Test (prediction) on the first six instances of the sample
-view(test_pred_table)
+#view(test_pred_table)
     
 ```
 
@@ -218,30 +218,30 @@ temp_dat %>%
     knitr::kable(booktabs = TRUE,
                  caption = "Significant predictors in the training sample.")
 
-moded_feat = c("feature_32","feature_33","feature_42", "feature_93", "feature_96", "feature_97", "feature_100", "feature_101", "feature_104")
+mod_feat = c("feature_32","feature_33","feature_42", "feature_93", "feature_96", "feature_97", "feature_100", "feature_101", "feature_104")
 ```
 
 ```{r}
 library(corrplot)              # Package for plots of correlation matrices
-C <- cor(data %>% dplyr::select(moded_feat)) # Correlation matrix
+C <- cor(data %>% dplyr::select(mod_feat)) # Correlation matrix
 corrplot(C, tl.pos='n')        # Plot
 ```
 
-```{r}
-library(magrittr)
-
-data_train_true %>%                                  # Start from large sample
-    dplyr::select(moded_feat)  %>%           # Keep only 7 features
-    as.matrix() %>%                                  # Transform in matrix
-    multiply_by_matrix(pca$rotation[,1:4]) %>%       # Rotate via PCA (first 4 columns of P)
-    `colnames<-`(c("PC1", "PC2", "PC3", "PC4")) %>%  # Change column names
-    head() 
-```
+# ```{r}
+# library(magrittr)
+# 
+# data_train_true %>%                                  # Start from large sample
+#     dplyr::select(mod_feat)  %>%           # Keep only 7 features
+#     as.matrix() %>%                                  # Transform in matrix
+#     multiply_by_matrix(pca$rotation[,1:4]) %>%       # Rotate via PCA (first 4 columns of P)
+#     `colnames<-`(c("PC1", "PC2", "PC3", "PC4")) %>%  # Change column names
+#     head() 
+# ```
 
 ```{r, message = FALSE, warning = FALSE}
 library(keras)
 
-input_layer <- layer_input(shape = c(7))    # all_feat_clean  9 columns 
+input_layer <- layer_input(shape = c(9))    # all_feat_clean  9 columns 
 
 encoder <- input_layer %>%       # First, encode
     layer_dense(units = 64, activation = "sigmoid") %>% 
@@ -249,7 +249,7 @@ encoder <- input_layer %>%       # First, encode
 
 decoder <- encoder %>%           # Then, from encoder, decode
     layer_dense(units = 64, activation = "sigmoid") %>% 
-    layer_dense(units = 7)       # the original sample has 9 features
+    layer_dense(units = 9)       # the original sample has 9 features
 ```
 
 ```{r, message = FALSE, warning = FALSE}
@@ -268,15 +268,15 @@ summary (ae_model)
 
 
 fit_ae <- ae_model %>% 
-    fit(data_train_scaled %>% as.data.frame() %>% dplyr::select(moded_feat)%>% as.matrix(),  # Input
-        data_train_scaled %>% as.data.frame() %>% dplyr::select(moded_feat)%>% as.matrix(),  # Output
+    fit(data_train_scaled %>% as.data.frame() %>% dplyr::select(mod_feat)%>% as.matrix(),  # Input
+        data_train_scaled %>% as.data.frame() %>% dplyr::select(mod_feat)%>% as.matrix(),  # Output
         epochs = 64, batch_size = 1024,
-        validation_data = list(data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix(), 
-                               data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix())
+        validation_data = list(data_testing_v2 %>% as.data.frame() %>%  dplyr::select(mod_feat) %>% as.matrix(), 
+                               data_testing_v2 %>% as.data.frame() %>%  dplyr::select(mod_feat) %>% as.matrix())
     )
 
-val_feat = data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix()
-val_lab = data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix()
+val_feat = data_testing_v2 %>% as.data.frame() %>%  dplyr::select(mod_feat) %>% as.matrix()
+val_lab = data_testing_v2 %>% as.data.frame() %>%  dplyr::select(mod_feat) %>% as.matrix()
 
 plot(fit_ae) + theme_grey()
 ```
@@ -288,21 +288,51 @@ mean(abs(val_lab))
 
 predict(ae_model, t(val_feat[1,])) 
 
-test_features <- data_testing_v2 %>% as.data.frame() %>%  dplyr::select(moded_feat) %>% as.matrix()
+test_features <- data_testing_v2 %>% as.data.frame() %>%  dplyr::select(mod_feat) %>% as.matrix()
 
 out = predict(ae_model,(test_features))
 
-out
+head(out)
+
+weightadder= sum(out)
 ```
 
 ```{r}
 
+a = NULL
 
-PF <- test %>% as.data.frame() %>% select(Id,cc_id2,date_id) %>% add_column(return=out) %>%
+out["new_col"] = a
+head(out)
+
+out1 = out %>% as.data.frame() %>% add_column(new_col = NA)
+head(out1)
+
+for (i in 1:nrow(out1)){
+  out1[i,10] = mean(out[i,1:9])
+  #out = cbind(out, mean_vars)
+  #return(out)
+  }
+
+head(out1[5:10])
+```
+
+
+
+```{r}
+
+
+PF <- test %>% as.data.frame() %>% select(Id,cc_id2,date_id) %>% add_column(return=out1[,10]) %>%
     arrange(Id) %>% group_by(date_id) %>%    mutate(weight=as.numeric(return>=quantile(return,0.7,na.rm=TRUE)),weight=weight/sum(weight)) %>%
     ungroup() %>%
     select(Id,Predicted=weight)
 ```
+
+```{r}
+PF
+
+readr::write_csv(PF,file="Monkey_supreem_mean_avg.csv")
+```
+
 
 
 
