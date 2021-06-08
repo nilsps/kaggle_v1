@@ -1,0 +1,596 @@
+###############
+####
+#### Contains serious bugs ! But its the code with the highest score
+####
+###############
+```{r, install packages}
+if(!require(tidyverse)){install.packages("tidyverse")}
+if(!require(BART)){install.packages("BART")}
+if(!require(lubridate)){install.packages("lubridate")}
+if(!require(glmnet)){install.packages("glmnet")}
+if(!require(quantmod)){install.packages("quantmod")}
+if(!require(tidyquant)){install.packages("tidyquant")}
+if(!require(purrr)){install.packages("purrr")}
+if(!require(dplyr)){install.packages("dplyr")}
+if(!require(rpart)){install.packages(c("rpart","rpart.plot"))}
+if(!require(randomForest)){install.packages(c("randomForest"))}
+if(!require(doParallel)){install.packages(c("doParallel"))}
+if(!require(caret)){install.packages(c("caret"))}
+if(!require(dummies)){install.packages("dummies")}
+if(!require(anomalize)){install.packages("anomalize")}
+
+if(!require(reticulate)){install.packages("reticulate")}
+
+
+library(caret) 
+library(reticulate)
+library(anomalize) 
+library(dplyr) 
+library(rpart) 
+library(rpart.plot)
+library(tidyquant)                      
+library(tidyverse)                      # Activate the data science package
+library(lubridate)                      # Activate the date management package
+library(glmnet)                         # Package for penalized regressions
+library(cowplot)
+library(quantmod)
+library(purrr)
+library(glmnet)                                     # This is THE package for penalised regressions
+library(tidyverse)                                  # ... the usual core packages
+```
+
+```{python}
+reticulate::repl_python()
+# test
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from keras import backend as K
+```
+
+```{r}
+data = read.csv2(file = "CC_training.csv", sep = ';')
+
+data_testing = read.csv2(file = "CC_testing.csv", sep = ';')
+
+``` 
+
+```{r first, warning = FALSE, message = FALSE}
+#data <- coin_history %>% arrange(time_open,name)                 # Just making sure all is in order
+
+cc_id = levels(as.factor(data$cc_id))                           # Set of assets
+
+
+data <- data  %>% 
+    group_by(cc_id)# %>%                           # Group asset by asset
+    #na.omit()                                     # Take out missing data
+features <- colnames(data[7:131])
+
+data_testing <- data_testing  %>% 
+    group_by(cc_id2) #%>%                           # Group asset by asset
+    #na.omit()                                     # Take out missing data
+    
+```
+
+```{r}
+data <- data %>% 
+    group_by(date) %>%                                   # Group by date
+    mutate(RET_1D_C = RET_1D > median(RET_1D),        # Create the categorical labels
+           RET_1M_C = RET_1M > median(RET_1M)) %>%
+    ungroup() %>%
+    mutate_if(is.logical, as.factor)
+
+data_train_scaled = data  %>% ungroup() %>% select(-c(cc_id, date, RET_1D,RET_1W,RET_1M,RET_3M, RET_1D_C, RET_1M_C)) %>% scale() #%>%  as.data.frame()
+
+data_testing_scaled = data_testing %>% ungroup() %>% select(-c(cc_id2, date_id, Id)) %>% scale()# %>% as.data.frame()
+
+data_test_scaled = scale(data_testing_scaled, center=attr(data_train_scaled, "scaled:center"), 
+                              scale=attr(data_testing_scaled, "scaled:scale")) 
+
+data_train_true = data  %>% ungroup() %>% select(-c(cc_id, date, RET_1D_C,RET_1M_C)) %>% scale() %>% as.data.frame()
+
+temp_test = data_testing %>% select(cc_id2, date_id, Id)
+dtt_test = cbind(as.data.frame(temp_test), as.data.frame(data_test_scaled))
+
+
+temp_mat = data %>% select(cc_id,date, RET_1D_C, RET_1M_C)
+data_train_true = cbind(as.data.frame(temp_mat), as.data.frame(data_train_true))
+
+sep_row = 8555
+
+data_test_true = data_train_true[1:sep_row,] # 30.03.2019 and up
+dtt = data_train_true[sep_row:nrow(data_train_true),]
+
+var_names = colnames(data_train_true)
+```
+
+# ```{r}
+# coin_history_v2$date = coin_history$date %>% as.Date()
+# 
+# coin_history_ts <- coin_history_v2 %>% rownames_to_column() %>% as.tibble() %>% select(-one_of('rowname'))
+# ```
+```{r}
+
+dtt$date = as.Date(dtt$date)
+
+# <- data_train_true %>% rownames_to_column() %>% as.tibble() %>% 
+#   mutate(date = as.Date(date)) %>% select(-one_of('date'))
+
+temp_dat =  dtt %>% dplyr::filter(cc_id ==1855)
+head(temp_dat)
+
+temp_dat %>% as.tibble()%>%
+   time_decompose(RET_3M, method = "stl", frequency = "auto", trend = "auto") %>%
+   anomalize(remainder, method = "gesd", alpha = 0.05 , max_anoms = 0.2) %>%
+   plot_anomaly_decomposition()
+
+temp_dat %>% as.tibble() %>% 
+  time_decompose(RET_1D) %>%
+  anomalize(remainder) %>%
+  time_recompose() %>%
+  plot_anomalies(time_recomposed = TRUE, ncol = 3, alpha_dots = 0.5)
+
+temp_dat_2 = temp_dat %>% as.tibble() %>% 
+  time_decompose(RET_1D) %>%
+  anomalize(remainder) %>%
+  time_recompose() 
+```
+
+
+# ```{r}
+# coin_list = unique(dtt$cc_id)
+# 
+# anom_funk = function(unique){
+#   temp_dat =  dtt %>% dplyr::filter(cc_id ==unique)
+#   anomalies = temp_dat %>% 
+#   as.tibble() %>%
+#   time_decompose(RET_1D) %>%
+#   anomalize(remainder) %>%
+#   time_recompose() %>%
+#   filter(anomaly == 'Yes')
+# }
+# 
+# 
+# 
+# anom_list = lapply(coin_list, anom_funk) %>% as.matrix
+# anom_list_date = matrix(0, nrow= 50, ncol = 79)
+# 
+# x = matrix(0, nrow= 50, ncol = 79)
+# temp2 = NULL
+# 
+# for (i in 1:nrow(anom_list)){
+#   temp = anom_list[[i]][[1]]
+#   temp2 = c(temp,temp2)
+# }
+#   
+# ```
+
+```{r}
+
+for (i in 1:(ncol(dtt)-5)){
+  Q1 = quantile(dtt[[i+5]], .25)
+  Q3 = quantile(dtt[[i+5]], .75)
+  IQR = IQR(dtt[[i+5]])
+  no_outliers = subset(dtt, dtt[[i+5]] > (Q1 - 1.5*IQR) & dtt[[i+5]] < (Q3 + 1.5*IQR)) #throws away row outside q1 and q3 
+}
+
+dim(no_outliers)
+```
+
+```{r}
+
+for (i in 1:(ncol(data_train_true)-5)){
+  Q1 = quantile(data_train_true[[i+5]], .25)
+  Q3 = quantile(data_train_true[[i+5]], .75)
+  IQR = IQR(data_train_true[[i+5]])
+  dtt2 = subset(data_train_true, data_train_true[[i+5]] > (Q1 - 1.5*IQR) & data_train_true[[i+5]] < (Q3 + 1.5*IQR)) #throws away row outside q1 and q3 
+}
+
+dim(dtt2)
+```
+
+
+
+# ```{r}
+# for (i in 1:(ncol(dtt_test)-5)){
+#   Q1 = quantile(dtt_test[[i+5]], .25)
+#   Q3 = quantile(dtt_test[[i+5]], .75)
+#   IQR = IQR(dtt_test[[i+5]])
+#   no_outliers_test_fin = subset(dtt_test, dtt_test[[i+5]] > (Q1 - 1.5*IQR) & dtt_test[[i+5]] < (Q3 + 1.5*IQR)) #throws away row outside q1 and q3 
+# }
+# 
+# dim(no_outliers_test_fin)
+# ```
+
+
+# ```{r}
+# set.seed(42)
+# cv_5 = trainControl(method = "cv", number = 5)
+# ```
+
+# ```{r}
+# hit_elnet = train(
+#   RET_1D ~ ., data = no_outliers,
+#   method = "glmnet",
+#   trControl = cv_5
+# )
+# hit_elnet
+#```
+
+# ```{r}
+# #Hardcore optimizer 
+# 
+# hit_elnet_int = train(
+#   RET_1D ~ . ^ 2, data = dtt,
+#   method = "glmnet",
+#   trControl = cv_5,
+#   tuneLength = 10
+# )
+# ```
+
+
+
+```{r} 
+dtt2_temp = dtt2 %>% select(-c(1:5))
+pca <- prcomp(dtt2_temp, scale. = T)
+names(pca)
+biplot(pca, scale = 0)
+
+pca_std_dev = pca$sdev
+pca_pr_var = pca_std_dev^2
+pca_prop_varex = pca_pr_var/sum(pca_pr_var)
+
+plot(pca_prop_varex, xlab = "Principal Component",
+             ylab = "Proportion of Variance Explained",
+             type = "b")
+
+plot(cumsum(pca_prop_varex), xlab = "Principal Component",
+              ylab = "Cumulative Proportion of Variance Explained",
+              type = "b")
+```
+
+```{r}
+
+pca_train_data = data.frame(RET_1D = dtt2$RET_1D, pca$x)
+pca_train_data = pca_train_data[,1:50]
+
+dtt_test[is.na(dtt_test)] = 0
+pca_test = dtt_test %>% ungroup() %>% select(-c(cc_id2, date_id, Id ))  %>% as.data.frame()
+pca_test = prcomp(pca_test, scale. = T)
+
+pca_temp_test <- predict(pca_test, newdata = dtt_test)
+pca_temp_test <- as.data.frame(pca_temp_test)
+
+```
+
+
+```{r}
+data_test_pca <- predict(pca, newdata = data_test_true)
+data_test_pca <- as.data.frame(data_test_pca)
+data_test_pca <- data_test_pca[,1:50]
+
+
+# rpart.prediction <- predict(rpart.model, data_test_pca)
+
+
+```
+
+
+
+# ```{r, find autotuned all primary filtred features for rpart}
+#   var_names = colnames(dtt2[5:length(dtt2)])
+# 
+# 
+#  
+#  cl <- makeCluster(8, type = "SOCK")
+#  registerDoParallel(cl)
+#  
+#  seed = 5
+#  start.time<-proc.time()
+#  # Create model with default paramters
+#  control <- trainControl(method="repeatedcv", number=10, repeats=3)
+#     metric <- "Accuracy"
+#     set.seed(seed)
+#     mtry <- sqrt(ncol(dtt2))
+#    tunegrid <- expand.grid(.mtry=mtry)
+#  rf_default <- train(RET_1D~., data=pca_train_data, method="rf", metric="RMSE", tuneGrid=tunegrid, trControl=control)
+#  print(rf_default)
+#  
+#  
+#  
+#  stop.time<-proc.time()
+# stop.time
+#    
+#  stopCluster(cl)
+#  
+#```
+ 
+ 
+# ```{r}
+# pca_train_data = pca_train_data[,1:10]
+# data_test_pca = data_test_pca[,1:10]
+#  
+#  library(e1071)
+#  library(doParallel)
+#  library(snow)
+#  library(doSNOW)
+# 
+#  cl <- makeCluster(8, type = "SOCK")
+#  registerDoParallel(cl)
+#  
+#  seed = 5
+#  start.time<-proc.time()
+#  
+#  control <- trainControl(method="repeatedcv", number=10, repeats=3, search="grid")
+#  set.seed(seed)
+#  tunegrid <- expand.grid(.mtry=c(1:15))
+#  rf_gridsearch <- train(RET_1D~., data=pca_train_data, method="rf", metric="RMSE",   uneGrid=tunegrid, trControl=control)
+#  print(rf_gridsearch)
+#  plot(rf_gridsearch)
+#  
+#  
+#  stop.time<-proc.time()
+# stop.time
+#    
+# stopCluster(cl)
+# ```
+
+
+# ```{r}
+# nfolds <- 5
+# 
+# learn_rate_opt <- c(0.01, 0.03)
+# max_depth_opt <- c(3, 4, 5, 6, 9)
+# sample_rate_opt <- c(0.7, 0.8, 0.9, 1.0)
+# col_sample_rate_opt <- c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
+#  
+#  hyper_params <- list(learn_rate = learn_rate_opt,
+#                       max_depth = max_depth_opt,
+#                       sample_rate = sample_rate_opt,
+#                       col_sample_rate = col_sample_rate_opt)
+#  
+#  search_criteria <- list(strategy = "RandomDiscrete",
+#                          max_models = 5,
+#                          seed = 5)
+#  
+#  gbm_grid <- h2o.grid(algorithm = "gbm",
+#                       grid_id = "gaussian",
+#                       x = x,
+#                       y = y,
+#                       training_frame = train_df_h2o,
+#                       ntrees = 100,
+#                       seed = 5,
+#                       nfolds = nfolds,
+#                       keep_cross_validation_predictions = TRUE,
+#                       hyper_params = hyper_params,
+#                       search_criteria = search_criteria)
+# 
+# ens_gbm_grid = h2o.stackedEnsemble(x = x,
+#                                  y = y,
+#                                  training_frame = train_df_h2o,
+#                                  validation_frame = test_df_h2o,
+#                                  base_models = gbm_grid@model_ids)
+# 
+# perf <- h2o.performance(ens_gbm_grid, newdata = test_df_h2o)
+# .getauc <- function(mm) h2o.mse(h2o.performance(h2o.getModel(mm), newdata = test_df_h2o))
+# baselearner_aucs <- sapply(gbm_grid@model_ids, .getauc)
+# baselearner_best_auc_test <- max(baselearner_aucs)
+# ensemble_auc_test <- h2o.mse(perf)
+# print(sprintf("Best Base-learner Test AUC:  %s", baselearner_best_auc_test))
+# print(sprintf("Ensemble Test AUC:  %s", ensemble_auc_test))
+# 
+# gbm_grid
+# ```
+
+# ```{r}
+# h2o.init()
+# nfolds <- 5
+# # learn_rate_opt <- c(0.01, 0.03)
+# # max_depth_opt <- c(3, 4, 5, 6, 9)
+# # sample_rate_opt <- c(0.7, 0.8, 0.9, 1.0)
+# lambda  = c(0.0,0.01, 0.05, 0.07, 0.1, 0.15, 0.2, 0.3, 0.4, .5)
+# alpha = c(0.0,0.01, 0.05, 0.07, 0.1, 0.15, 0.2, 0.3, 0.4, .5)
+# 
+#  
+# hyper_params <- list(lambda  = lambda, alpha = alpha )#,alpha = alpha)
+#  
+# search_criteria <- list(strategy = "RandomDiscrete",
+#                          max_models = 50,
+#                          seed = 5)
+#  
+# glm_grid <- h2o.grid(algorithm = "glm",
+#                       grid_id = "gaussian",
+#                       x = x,
+#                       y = y,
+#                       training_frame = train_df_h2o,
+#                       seed = 5,
+#                       nfolds = nfolds,
+#                       keep_cross_validation_predictions = TRUE,
+#                       hyper_params = hyper_params,
+#                       search_criteria = search_criteria)
+# 
+# ens_glm_grid = h2o.stackedEnsemble(x = x,
+#                                  y = y,
+#                                  training_frame = train_df_h2o,
+#                                  validation_frame = test_df_h2o,
+#                                  base_models = glm_grid@model_ids)
+# 
+# perf <- h2o.performance(ens_glm_grid, newdata = test_df_h2o)
+# .getauc <- function(mm) h2o.mse(h2o.performance(h2o.getModel(mm), newdata = test_df_h2o))
+# baselearner_aucs <- sapply(glm_grid@model_ids, .getauc)
+# baselearner_best_auc_test <- max(baselearner_aucs)
+# ensemble_auc_test <- h2o.mse(perf)
+# print(sprintf("Best Base-learner Test AUC:  %s", baselearner_best_auc_test))
+# print(sprintf("Ensemble Test AUC:  %s", ensemble_auc_test))
+# 
+# glm_grid
+# ```
+
+```{r}
+library(h2o)
+
+
+pca_train_data = pca_train_data[,1:10]
+data_test_pca = data_test_pca[,1:10]
+
+
+h2o.init() # Starts the h2o engine. 
+
+dtt_test_h2o<-as.h2o(data_test_pca)
+
+dtt_test_fin_h2o = as.h2o(pca_temp_test)
+
+smp_size <- floor(0.75 * nrow(pca_train_data))
+## set the seed to make your partition reproducible
+set.seed(5)
+train_ind <- sample(seq_len(nrow(pca_train_data)), size = smp_size)
+train_df <- pca_train_data[train_ind, ]
+test_df <- pca_train_data[-train_ind, ]
+# initialize the h2o
+# create the train and test h2o data frames
+train_df_h2o<-as.h2o(train_df)
+test_df_h2o<-as.h2o(test_df)
+
+# Identify predictors and response
+y <- "RET_1D"
+x <- setdiff(names(train_df_h2o), y)
+# Number of CV folds (to generate level-one data for stacking)
+nfolds <- 5
+# 1. Generate a 3-model ensemble (GBM + RF + Logistic)
+# Train & Cross-validate a GBM
+my_gbm <- h2o.gbm(x = x,
+                  y = y,
+                  training_frame = train_df_h2o,
+                  nfolds = nfolds,
+                  distribution = "gaussian",
+                  ntrees = 100,
+                  max_depth = 9,
+                  col_sample_rate = 0.4,
+                  min_rows = 2,
+                  learn_rate = 0.3,
+                  keep_cross_validation_predictions = TRUE,
+                  seed = 5)
+# Train & Cross-validate a RF
+my_rf <- h2o.randomForest(x = x,
+                          y = y,
+                          training_frame = train_df_h2o,
+                          nfolds = nfolds,
+                          ntrees = 100,
+                          validation_frame = test_df_h2o,
+                          keep_cross_validation_predictions = TRUE,
+                          seed = 5)
+# Train & Cross-validate a LR
+
+# my_auto = h2o.automl(x = x, 
+#                      y = y,
+#                      training_frame = train_df_h2o,
+#                      max_models = 20,
+#                      nfolds = nfolds,
+#                      seed = 5)
+
+
+### GLM removed due to strange resaults 
+my_lr <- h2o.glm(x = x,
+                  y = y,
+                  training_frame = train_df_h2o,
+                  family = c("gaussian"),
+                  nfolds = nfolds,
+                  alpha = .0,
+                  lambda = .4,
+                  keep_cross_validation_predictions = TRUE,
+                  seed = 5)
+
+
+ # my_svm = h2o.psvm(gamma = 0.01,
+ #                       rank_ratio = 0.1,
+ #                       y = y,
+ #                       kernel_type = "gaussian ",
+ #                       training_frame = train_df_h2o,
+ #                       validation_frame = test_df_h2o,
+ #                       disable_training_metrics = FALSE)
+
+# No Windows support #####
+# my_xgb = h2o.xgboost(x = x,
+#                    y = y,
+#                    training_frame = train_df_h2o,
+#                    validation_frame = test_df_h2o,
+#                    booster = "dart",  
+#                    normalize_type = "tree",
+#                    seed = 5)
+
+# Train a stacked random forest ensemble using the GBM, RF and LR above
+ensemble <- h2o.stackedEnsemble(x = x,
+                                y = y,
+                                metalearner_algorithm="drf",
+                                training_frame = train_df_h2o,
+                                validation_frame = test_df_h2o,
+                                base_models = list(my_gbm, my_rf, my_lr))
+
+# Eval ensemble performance on a test set
+perf <- h2o.performance(ensemble, newdata = test_df_h2o)
+# Compare to base learner performance on the test set
+# perf_my_svm_test <- h2o.performance(my_svm, newdata = test_df_h2o)
+perf_gbm_test <- h2o.performance(my_gbm, newdata = test_df_h2o)
+#perf_xgb_test <- h2o.performance(my_xgb, newdata = test_df_h2o)
+#perf_ensemble_2_test = h2o.performance(ensemble_2, newdata = test_df_h2o)
+#perf_auto_test <- h2o.performance(my_auto, newdata = test_df_h2o)
+perf_rf_test <- h2o.performance(my_rf, newdata = test_df_h2o)
+perf_lr_test <- h2o.performance(my_lr, newdata = test_df_h2o)
+#perf_xgb_test <- h2o.performance(my_xgb, newdata = test_df_h2o)
+baselearner_best_auc_test <- max(h2o.mse(perf_gbm_test), h2o.mse(perf_rf_test), h2o.mse(perf_lr_test))
+ensemble_auc_test <- h2o.mse(perf)
+print(sprintf("Best Base-learner Test MSE:  %s", baselearner_best_auc_test))
+print(sprintf("Ensemble Test MSE:  %s", ensemble_auc_test))
+
+#pred <- h2o.predict(ensemble, newdata = test_df_h2o) # This is testing on the small test set. 
+pred2 <- h2o.predict(ensemble, newdata = dtt_test_fin_h2o) # Big test set
+#pred
+pred2 = pred2 %>% as.data.frame()
+```
+
+
+
+# ```{r}
+# if(!require(quadprog)){install.packages(c("quadprog"))}
+# library(quadprog)
+# 
+# test_feat_all = data_train_scaled %>% colnames()
+# 
+# #out = predict(model_ens, list(feat_test_1, feat_test_2, feat_test_3))# - data_test_true$RET_1D)
+# #out = t(matrix(predict(my_auto, dtt_test_h2o),50))# Return matrix
+# out = t(matrix(h2o.predict(ensemble, newdata = dtt_test_fin_h2o),50))
+# out
+# 
+# w_stacked <- solve.QP(Dmat = cov(out),
+#               dvec = colMeans(out),
+#               Amat = cbind(1, diag(50)),
+#               bvec = c(1, rep(0,50)),
+#               meq = 0
+#               )
+# 
+# round(w_stacked$solution,3)
+# ```
+# 
+# ```{r}
+# weights<-data.frame(rep((matrix(round(w_stacked$solution,3))),each=487))
+# weights<-cbind(c(1:24350),weights)
+# names(weights)[1]<-"Id"
+# names(weights)[2]<-"Predicted"
+# 
+# write_csv(weights,"tes_no_lev_h2o.csv")
+# ```
+
+```{r}
+PF <- as.data.frame(dtt_test) %>% select(Id,cc_id2,date_id) %>% add_column(return=pred2) %>%
+    arrange(Id) %>% group_by(date_id) %>% mutate(weight=as.numeric(return>=quantile(return,0.7,na.rm=TRUE)),weight=weight/sum(weight)) %>%
+    ungroup() %>%
+    select(Id,Predicted=weight)
+    #select(Id,Predicted=weight, date_id)
+#PF$date_id = gsub(" ", "_", PF$date_id)
+#day_test = PF %>% filter(date_id =="Day_6000")
+#sum(day_test$Predicted)
+
+glimpse(PF)
+readr::write_csv(PF,file="test_no_lev_probably.csv")
+```
